@@ -1,0 +1,245 @@
+测试车辆管理系统----百度地图模块项目总结：
+1、百度地图经纬度数据，去点测试时，注意不能随便取一些无法计算的经纬度坐标，比如：取到海里或者未知地方。这样将会出现：百度地图内置方法：getRoute()无法计算等错误。
+
+下面代码：   var plan = driving.getResults().getPlan(0);
+              	     var pts = plan.getRoute(0).getPath();
+2、后台传回的数据，经纬度坐标不能为空。否则无法转换坐标，报错。
+
+3、gps采集数据转换为百度地图有以下两种方法：
+
+（1）、采用百度地图的坐标批量转换方法：会发现存在坑，就是批量转换每次只能转换10个点，超过10个点就会报错。因此采用以下for循环来转换，每次转换10个点。
+会发现下面的方法也存在一些问题：
+ for (var i = 0; i < ago_groupCount; i++) 这句for循环，加载完可能会报一个 satus:26的错误，但是也根本找不出错在哪儿了，解决方法是：改为： for (var i = 0; i < ago_groupCount-1; i++) ，这句理论上少循环一组数据，但是又没有报错，而且项目部署到服务器上竟然还是正确的，也是醉了。。。
+目前只能这样先解决。
+     	var points = [];
+        var ago_total = 0; //总记录数
+        var ago_groupCount = 0; //每次转十条
+        function loadAgotrack() {
+            console.log($("#startDate").val());
+            console.log($("#endDate").val());
+            console.log($("#ago_input").val());
+            if ($("#startDate").val() == null || $("#endDate").val() == "" || $("#ago_input").val() == "") {
+                alert("不能为空");
+                return;
+            } else {
+                $.ajax({
+                    "url": "../json/omap.json",
+                    // "url": "http://192.168.0.222:8080/car-management/car/carTrack.action",
+                    "type": "get",
+                    // "dataType": "jsonp", //数据类型为jsonp  
+                    // "jsonp": "jsonpCallback", //服务端用于接收callback调用的function名的参数  
+                    "data": {
+                        "startDate": $("#startDate").val(),
+                        "endDate": $("#endDate").val(),
+                        "vSn": $("#ago_input").val()
+                    },
+                    "success": function(res) {
+                        console.log(res);
+                        for (var n = 0; n < res.length; n++) {
+                            for (var nn = 0; nn < res[n].legth; nn++) {}
+                            points.push(new BMap.Point(res[n][2], res[n][1]));
+                        }
+                        if (points.length % 10 > 0) {
+                            ago_groupCount = (points.length / 10) + 1;
+                        } else {
+                            ago_groupCount = (points.length / 10);
+                        }
+                        for (var i = 0; i < ago_groupCount; i++) { //外层循环，有多少组十条
+                            var pos = new Array();
+                            for (var j = 0; j < 10; j++) { //内层循环，每组十条
+                                if (ago_total < points.length) { //不超过总记录数结束
+                                    console.log(points);
+                                    console.log(points[(i * 10) + j].lng);
+                                    console.log(points[(i * 10) + j].lat);
+                                    var point = new BMap.Point(points[(i * 10) + j].lng, points[(i * 10) + j].lat);
+                                    pos.push(point);
+                                    console.log(pos);
+                                }
+                                ago_total++;
+                            }
+                            var convertor = new BMap.Convertor();
+                            convertor.translate(pos, 1, 5, function(data) {
+                                console.log(data);
+                                if (data.status === 0) {
+                                    for (var m = 0; m < data.points.length; m++) {
+                                        console.log(data.points);
+                                        currentLocation(data.points[0], res);
+                                    }
+                                }
+                            });
+                        }
+                    },
+                    "error": function(res) {
+                        console.log(res);
+                    }
+                });
+            }
+        }
+
+（2）、采用调接口的方法，
+   var mypoint = "";
+    // 加载页面，加载全部车辆
+    $.ajax({
+        // "url": "/car-management/car/allcar.action",
+        "url": "../json/map.json",
+        "type": "get",
+        "success": function(res) {
+            console.log(res);
+            // console.log(res.length);
+            for (var n = 0; n < res.length; n++) {
+                mypoint += res[n].longitude + ',' + res[n].latitude + ";";
+            }
+            mypoint = mypoint.substring(0, mypoint.lastIndexOf(';'));
+            console.log(mypoint);
+            // ----------坐标转换-------------------------------------------------------------------------------------
+//注意：跨域请求方式，不能以ajax的jsonp的那种方式，否则项目部署到服务器上将会跨域，报错。
+//亲测：以下   $.getJSON(reqUrl + "&callback=?", function(data) {}）这种方式可完美解决跨域问题。
+
+            var reqUrl = "http://api.map.baidu.com/geoconv/v1/?coords=" + mypoint + "&from=1&to=5&ak=pDUf1lcj5kEDkegBS5DSF1TA9uib5AjE";
+            $.getJSON(reqUrl + "&callback=?", function(data) {
+                console.log("success");
+                console.log(data);
+                for (var i = 0; i < data.result.length; i++) {
+                    // var marker = new BMap.Marker(new BMap.Point(116.404, 39.915)); // 创建点
+                    var marker = new BMap.Marker(new BMap.Point(data.result[i].x, data.result[i].y), {
+                        icon: myIcon
+                    }); // 创建标注
+                    map.addOverlay(marker);
+                    console.log(res[i]);
+                    var showInfo = "<div class='point_content'>当前状态：" + res[i].runStatic +
+                        "<br/>" + "车辆编号:<span id='car_id'>" + res[i].vSn +
+                        "</span><br/>是否允许：" + res[i].isAllow +
+                        "<br/><span class='point_tips'>更多车辆信息请查看右侧车辆详情面板<span>" +
+                        "</div>";
+                    markers.push(marker);
+                    addClickHandler(showInfo, marker, i, res);
+                    //最简单的用法，生成一个marker数组，然后调用markerClusterer类即可。叠加点,实现点聚合
+                    var markerClusterer = new BMapLib.MarkerClusterer(map, {
+                        markers: markers
+                    });
+                }
+            });
+        },
+        "error": function(data) {
+            console.log(data);
+        }
+    });
+
+
+4、回车提交事件
+    $("body").keydown(function() {
+        if (event.keyCode == "13") { //keyCode=13是回车键
+            map.clearOverlays(); //清除图层覆盖物
+            searchcar();
+        }
+    });
+
+5 、转换日期格式(时间戳转换为datetime格式)
+    function changeDateFormat(cellval) {
+        var dateVal = cellval + "";
+        if (cellval != null) {
+            var date = new Date(parseInt(dateVal.replace("/Date(", "").replace(")/", ""), 10));
+            var month = date.getMonth() + 1 < 10 ? "0" + (date.getMonth() + 1) : date.getMonth() + 1;
+            var currentDate = date.getDate() < 10 ? "0" + date.getDate() : date.getDate();
+
+            var hours = date.getHours() < 10 ? "0" + date.getHours() : date.getHours();
+            var minutes = date.getMinutes() < 10 ? "0" + date.getMinutes() : date.getMinutes();
+            var seconds = date.getSeconds() < 10 ? "0" + date.getSeconds() : date.getSeconds();
+            return date.getFullYear() + "-" + month + "-" + currentDate + " " + hours + ":" + minutes + ":" + seconds;
+        }
+    }
+
+
+6、百度地图加载点太多，页面卡顿问题。
+采用百度地图接口实现点聚合加载点，发现页面有时会卡顿，尤其是在ie浏览器下面，卡顿更严重。
+发现：百度地图海量点方式 加载点，页面会比较不卡顿，但是，无法自定义图标，只能使用官方文档给出的样式。而且数据其他字段的传输也有一些问题，目前还没有解决。。。。
+
+7、日期控件
+laydate
+包括加载页面，直接显示日期间隔：一月前----- 当前系统日期。
+页面代码：
+html:
+ <input placeholder="开始日期" class="form-control layer-date mydata_input" id="startDate" name="startDate">
+ <input placeholder="结束日期" class="form-control layer-date mydata_input" id="endDate" name="endDate">
+js:
+ //时间选择器
+ var myDate = new Date();
+ console.log(myDate);
+ var date2 = new Date(myDate);
+ date2.setDate(myDate.getDate() - 30);
+ console.log(date2);
+ laydate.render({
+     elem: '#startDate',
+     type: 'datetime',
+     value: date2,
+     theme: '#041473' //自定义颜色主题
+ });
+ laydate.render({
+     elem: '#endDate',
+     type: 'datetime',
+     value: myDate,
+     theme: '#041473' //自定义颜色主题
+ });
+相关资源：D:\phpStudy\WWW\car\CarMangae0\assets\js\laydate.js
+D:\phpStudy\WWW\car\CarMangae0\assets\js\theme 文件夹
+
+
+
+8、页面懒加载
+document.onreadystatechange = loadingChange; //当页面加载状态改变的时候执行这个方法.  
+function loadingChange() {
+    if (document.readyState == "complete") { //当页面加载状态为完全结束时进入   
+        $(".loading").hide(); //当页面加载完成后将loading页隐藏  
+    }
+}
+
+
+9、判断浏览器类型
+function isFF() {
+    return navigator.userAgent.indexOf("Firefox") != -1;
+}
+
+function isChrome() {
+    return navigator.userAgent.indexOf("Chrome") > -1;
+}
+isFF();
+console.log(isFF());
+console.log(isChrome());
+isChrome();
+if (isFF() || isChrome()) {
+// 解决github单页https加载不了百度地图资源问题
+    // $("head").append("<meta http-equiv='Content-Security-Policy' content='upgrade-insecure-requests'>");
+}
+
+
+
+10、表单重置函数
+function formReset() {
+    $(':input', '.form-horizontal')
+        .not(':button, :submit, :reset, :hidden,:radio') // 去除不需要重置的input类型
+        .val('')
+        .removeAttr('checked')
+        .removeAttr('selected');
+};
+
+11、js数组删除某一项指定的值
+Array.prototype.indexOf = function(val) {
+    for (var i = 0; i < this.length; i++) {
+        if (this[i] == val) return i;
+    }
+    return -1;
+};
+
+Array.prototype.remove = function(val) {
+    var index = this.indexOf(val);
+    if (index > -1) {
+        this.splice(index, 1);
+    }
+};
+
+12、解决使用tabs，所有资源都在同一个页面，页面加载缓慢问题。
+当点击某一个tabs时，再加载相应的js文件，加载相关资源。
+
+$(".rights").click(function() {
+    $("html").append("<script type='text/javascript' src='./js/rightstable.js'></script>");
+});
